@@ -27,8 +27,11 @@ local lanterns = {} -- Now a table indexed by object.id
 local pendingLanternObjects = nil -- list of lists (cell objects)
 local pendingLanternCellIdx = 1
 local pendingLanternObjIdx = 1
-local PENDING_LANTERN_BATCH = 100
+local PENDING_LANTERN_BATCH = 12
 local PENDING_LANTERN_RAYCASTS = 3
+
+local ZUnitVector = util.vector3(0,0,1)
+local angleLimit = (math.pi / 2) - 0.001
 
 local gravity = 9.8
 local angularDamping = 0.99
@@ -46,6 +49,11 @@ local intWindPowerMin = 0
 local intWindPowerMax = 0.5
 local windBurstProbability = 0.5
 local windPowerChangeInterval = 1
+
+-- Weather check cache (updates once per second)
+local weatherCheckTimer = 0
+local weatherCheckInterval = 1.0
+local lastWeatherState = nil
 
 --if true then return end
 
@@ -190,8 +198,7 @@ local function findLanternsDeferredStep()
             local foundConfig = findConfig(obj)
             
             -- Skip blacklisted objects
-            if isBlacklisted(obj) then goto continue end
-            
+            if isBlacklisted(obj) then goto continue end            
             
             if foundConfig then
                 local finishedInitialise = false
@@ -199,12 +206,20 @@ local function findLanternsDeferredStep()
                     finishedInitialise = true
                 end
                 local timerOffset = math.random() / 4
+                
+                local initialSwingAxis = nil
+                if foundConfig.localSwingDirection then
+                    initialSwingAxis = obj.rotation:apply(foundConfig.localSwingDirection):normalize():cross(ZUnitVector)
+                end
+
                 lanterns[obj.id] = {
                     object = obj,
                     swingPhaseOffset = math.random() * 2 * math.pi,
                     yawPhaseOffset = math.random() * 2 * math.pi,
+                    initialYawRotation = obj.rotation:getYaw(),
                     originOffset = foundConfig.offset,
                     localSwingDirection = foundConfig.localSwingDirection,
+                    initialSwingAxis = initialSwingAxis,
                     avoidYawRotation = foundConfig.avoidYawRotation,
                     weight = foundConfig.weight or 1,
                     windData = initializeLanternWindData(obj),
@@ -245,9 +260,15 @@ end
 
 local function cleanUpLanterns()
     if not currentCellsGroup then return end
+    
+    -- Build O(1) lookup table for current cells
+    local validCells = {}
+    for _, cell in ipairs(currentCellsGroup) do
+        validCells[cell] = true
+    end
+    
     for id, lanternData in pairs(lanterns) do
-        if not lanternData.object:isValid() or not gutils.arrayContains(currentCellsGroup, lanternData.object.cell) then
-            -- print("Removed a lantern", lanternData.object)
+        if not lanternData.object:isValid() or not validCells[lanternData.object.cell] then
             lanterns[id] = nil
         end
     end
@@ -278,9 +299,9 @@ local function onRaycastResult(data)
     
 end
 
-local ZUnitVector = util.vector3(0,0,1)
+
 local teleportOptsPayload = {}
-local angleLimit = (math.pi / 2) - 0.3
+
 
 local function animateLanterns(dt)
     local lookDir = gutils.lookDirection(player)
@@ -309,11 +330,11 @@ local function animateLanterns(dt)
             updateLanternWindForce(windData, dt)
 
             local swingDirection = windDirection
-            if localSwingDirection then
-                swingDirection = lantern.rotation:apply(localSwingDirection):normalize()
-                swingDirection = (swingDirection * windDirection:dot(swingDirection)):normalize()
+            local swingAxis = lanternData.initialSwingAxis -- For fixed-axis swinged objects such as guild signs this will have a value and theres no point in recalculating it
+            if not swingAxis then
+                -- For non-fixed axis swinging objects (lanterns) - we calculate axis every frame
+                swingAxis = swingDirection:cross(ZUnitVector):normalize()
             end
-            local swingAxis = swingDirection:cross(ZUnitVector):normalize()
 
             local gravityForce = -gravity * math.sin(windData.swingAngle)
             local windForceEffect = (windData.windForce / weight) * math.cos(windData.swingAngle)
@@ -322,20 +343,17 @@ local function animateLanterns(dt)
             local angularAcceleration = netTorque
             windData.angularVelocity = (windData.angularVelocity + angularAcceleration * dt) * angularDamping
             windData.swingAngle = windData.swingAngle + windData.angularVelocity * dt
-            if avoidYawRotation and (windData.swingAngle > angleLimit or windData.swingAngle < -angleLimit) then 
-                windData.swingAngle = util.clamp(windData.swingAngle, -angleLimit, angleLimit)                
-                windData.angularVelocity = 0
-            end
+            
 
-            local swingRotation = util.transform.rotate(windData.swingAngle, swingAxis)            
+            local swingRotation = util.transform.rotate(windData.swingAngle, swingAxis)
 
             local combinedRotation
-            if not avoidYawRotation then
+            if avoidYawRotation then
+                combinedRotation = swingRotation * util.transform.rotateZ(lanternData.initialYawRotation)
+            else
                 local yawAngle = math.sin(core.getGameTime() * yawRotationSpeed + lanternData.yawPhaseOffset) * yawRotationAmplitude
                 local yawRotation = util.transform.rotateZ(yawAngle)
                 combinedRotation = swingRotation * yawRotation
-            else
-                combinedRotation = swingRotation * util.transform.rotateZ(lantern.rotation:getYaw())
             end
 
             local currOriginOffset = lantern.rotation:apply(originOffset)
@@ -350,12 +368,20 @@ local function animateLanterns(dt)
     end
 end
 
-local function onCellChange(cell)
-    local weatherRecord = core.weather.getCurrent(cell)      
-
-    currentCellsGroup = getCellsAround(cell)
-    if cell.isExterior then
-        if weatherRecord.isStorm then
+local function updateWeatherSettings(cell)
+    local weatherRecord = core.weather.getCurrent(cell)
+    local isExterior = cell.isExterior
+    local isStorm = weatherRecord.isStorm
+    
+    -- Check if weather state actually changed
+    local newWeatherState = isExterior and (isStorm and "storm" or "exterior") or "interior"
+    if lastWeatherState == newWeatherState then
+        return false  -- No change, skip update
+    end
+    lastWeatherState = newWeatherState
+    
+    if isExterior then
+        if isStorm then
             windPowerMin = stormWindPowerMin
             windPowerMax = stormWindPowerMax
         else
@@ -366,7 +392,13 @@ local function onCellChange(cell)
         windPowerMin = intWindPowerMin
         windPowerMax = intWindPowerMax
     end
+    
+    return true  -- Weather updated
+end
 
+local function onCellChange(cell)
+    currentCellsGroup = getCellsAround(cell)
+    updateWeatherSettings(cell)
     cleanUpLanterns()
     prepareLanternSearch()
 end
@@ -374,12 +406,17 @@ end
 local function onUpdate(dt)
     if dt <= 0 then return end
     local cell = player.cell
-    if cell ~= currentCell then    
-        currentCell = cell    
+    if cell ~= currentCell then
+        currentCell = cell
         onCellChange(cell)
     end
 
-    --print("wind speed", core.weather.getCurrentWindSpeed(cell),"storm direction",core.weather.getCurrentStormDirection(cell))
+    -- Update weather settings periodically (once per second)
+    weatherCheckTimer = weatherCheckTimer - dt
+    if weatherCheckTimer <= 0 then
+        updateWeatherSettings(cell)
+        weatherCheckTimer = weatherCheckInterval
+    end
 
     findLanternsDeferredStep()
     animateLanterns(dt)
