@@ -3,13 +3,15 @@ local mp = 'scripts/MaxYari/animated_lanterns/'
 local core = require('openmw.core')
 local world = require('openmw.world')
 local util = require('openmw.util')
-local gutils = require(mp .. 'scripts/gutils')
 local markup = require('openmw.markup')
 local vfs = require('openmw.vfs')
 
+local gutils = require(mp .. 'utils/gutils')
+local s = require(mp .. 'settings_global')
+
+
 local PLAYER_EVENT_RAYCAST_REQUEST = "LanternRaycastRequest"
 local PLAYER_EVENT_RAYCAST_RESULT = "LanternRaycastResult"
-
 
 local currentCell = nil
 local currentCellsGroup = nil
@@ -36,7 +38,8 @@ local angleLimit = (math.pi / 2) - 0.001
 local gravity = 9.8
 local angularDamping = 0.99
 local windDirection = util.vector3(1, -1, 0):normalize()
-local yawRotationSpeed = 0.02
+local baseYawRotationSpeed = 0.02
+local yawRotationSpeed = baseYawRotationSpeed
 local yawRotationAmplitude = 0.5
 
 local windPowerMin = 0
@@ -187,6 +190,7 @@ local function findLanternsDeferredStep()
     local raycastsThisFrame = 0
     while processed < PENDING_LANTERN_BATCH and pendingLanternObjects and raycastsThisFrame < PENDING_LANTERN_RAYCASTS do
         local cellList = pendingLanternObjects[pendingLanternCellIdx]
+        
         if not cellList then
             pendingLanternObjects = nil
             break
@@ -200,7 +204,7 @@ local function findLanternsDeferredStep()
             -- Skip blacklisted objects
             if isBlacklisted(obj) then goto continue end            
             
-            if foundConfig then
+            if foundConfig then                
                 local finishedInitialise = false
                 if foundConfig.onlyHangs then
                     finishedInitialise = true
@@ -325,7 +329,7 @@ local function animateLanterns(dt)
             local originOffset = lanternData.originOffset
             local localSwingDirection = lanternData.localSwingDirection
             local avoidYawRotation = lanternData.avoidYawRotation
-            local weight = lanternData.weight or 1
+            local weight = lanternData.weight or 1            
 
             updateLanternWindForce(windData, dt)
 
@@ -382,15 +386,18 @@ local function updateWeatherSettings(cell)
     
     if isExterior then
         if isStorm then
-            windPowerMin = stormWindPowerMin
-            windPowerMax = stormWindPowerMax
+            windPowerMin = stormWindPowerMin * s.settings.StormWindMult
+            windPowerMax = stormWindPowerMax * s.settings.StormWindMult
+            yawRotationSpeed = baseYawRotationSpeed * s.settings.StormWindMult
         else
-            windPowerMin = extWindPowerMin
-            windPowerMax = extWindPowerMax
+            windPowerMin = extWindPowerMin * s.settings.CalmWindMult
+            windPowerMax = extWindPowerMax * s.settings.CalmWindMult
+            yawRotationSpeed = baseYawRotationSpeed * s.settings.CalmWindMult
         end
     else
-        windPowerMin = intWindPowerMin
-        windPowerMax = intWindPowerMax
+        windPowerMin = intWindPowerMin * s.settings.InteriorWindMult
+        windPowerMax = intWindPowerMax * s.settings.InteriorWindMult
+        yawRotationSpeed = baseYawRotationSpeed * s.settings.InteriorWindMult
     end
     
     return true  -- Weather updated
@@ -405,6 +412,7 @@ end
 
 local function onUpdate(dt)
     if dt <= 0 then return end
+    
     local cell = player.cell
     if cell ~= currentCell then
         currentCell = cell

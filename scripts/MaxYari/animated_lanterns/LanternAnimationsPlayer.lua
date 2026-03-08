@@ -1,7 +1,11 @@
+local mp = 'scripts/MaxYari/animated_lanterns/'
+
 local nearby = require('openmw.nearby')
 local util = require('openmw.util')
 local core = require('openmw.core')
 local nearby = require('openmw.nearby')
+
+local s = require(mp .. 'settings_player')
 
 local PLAYER_EVENT_RAYCAST_REQUEST = "LanternRaycastRequest"
 local PLAYER_EVENT_RAYCAST_RESULT = "LanternRaycastResult"
