@@ -375,7 +375,8 @@ end
 local function updateWeatherSettings(cell)
     local weatherRecord = core.weather.getCurrent(cell)
     local isExterior = cell.isExterior
-    local isStorm = weatherRecord.isStorm
+    local isStorm = false
+    if weatherRecord then isStorm = weatherRecord.isStorm end
     
     -- Check if weather state actually changed
     local newWeatherState = isExterior and (isStorm and "storm" or "exterior") or "interior"
