@@ -46,8 +46,8 @@ local function uprint(...)
         for i, v in ipairs(args) do
             args[i] = tostring(v)
         end
-        local messageHeader = "[Experiments]"
-        if omwself then messageHeader = messageHeader .. "[" .. omwself.recordId .. "]" end
+        local messageHeader = "[AnimLanterns]"
+        if sstatus then messageHeader = messageHeader .. "[" .. omwself.recordId .. "]" end
         print(messageHeader .. ":", table.concat(args, " "))
     end
 end

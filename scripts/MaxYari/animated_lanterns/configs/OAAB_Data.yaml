@@ -1,0 +1,13 @@
+## Author: kildozery, 2026
+##
+## OAAB Lanterns
+
+
+lantern_configs: 
+  - name: "ab_light_delantpaper"
+    offset: [0, 0, 0]
+  - name: "ab_light_delantglass"
+    offset: [0, 0, 0]
+  - name: "ab_light_delant"
+    offset: [0, 0, 0]
+

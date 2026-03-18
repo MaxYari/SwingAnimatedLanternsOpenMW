@@ -1,4 +1,5 @@
 local mp = 'scripts/MaxYari/animated_lanterns/'
+DebugLevel = 0
 
 local core = require('openmw.core')
 local world = require('openmw.world')
@@ -7,13 +8,20 @@ local markup = require('openmw.markup')
 local vfs = require('openmw.vfs')
 
 local gutils = require(mp .. 'utils/gutils')
+local DEFS = require(mp .. 'utils/defs')
 local s = require(mp .. 'settings_global')
-
 
 local PLAYER_EVENT_RAYCAST_REQUEST = "LanternRaycastRequest"
 local PLAYER_EVENT_RAYCAST_RESULT = "LanternRaycastResult"
+local PLAYER_EVENT_CAMERA_DIRECTION = "LanternCameraDirection"
+
+-- Interface
+local interface = {
+    version = 1.0    
+}
 
 local currentCell = nil
+local cameraLookDirection = util.vector3(0, 1, 0)
 local currentCellsGroup = nil
 local player = world.players[1]
 
@@ -25,10 +33,9 @@ local minAnimDist = 10*69      -- Distance at which minAnimFPS applies
 local maxAnimDist = activeLanternDistance   -- Distance at which maxAnimFPS applies
 
 local lanterns = {} -- Now a table indexed by object.id
--- Deferred lantern search state
-local pendingLanternObjects = nil -- list of lists (cell objects)
-local pendingLanternCellIdx = 1
-local pendingLanternObjIdx = 1
+-- Deferred lantern search state (flat list of objects)
+local pendingLanternObjects = nil -- flat list of objects to process
+local pendingLanternIdx = 1
 local PENDING_LANTERN_BATCH = 12
 local PENDING_LANTERN_RAYCASTS = 3
 
@@ -99,18 +106,36 @@ local function loadLanternConfigs()
     local mergedConfig = {
         lantern_configs = {},
         blacklisted_names = {},
-        blacklisted_ids = {}
+        blacklisted_cell_ids = {}
     }
 
     for filePath in vfs.pathsWithPrefix('scripts/MaxYari/animated_lanterns/configs/') do
         if filePath:match('%.yaml$') then
+            gutils.print("Loadin lantern config ".. filePath,0)
             local config = markup.loadYaml(filePath)
             if config then
                 mergeArray(mergedConfig.lantern_configs, config.lantern_configs)
                 mergeArray(mergedConfig.blacklisted_names, config.blacklisted_names)
-                mergeArray(mergedConfig.blacklisted_ids, config.blacklisted_ids)
+                mergeArray(mergedConfig.blacklisted_cell_ids, config.blacklisted_cell_ids)
             end
         end
+    end
+
+    -- Lowercase all names and blacklist entries
+    for _, config_entry in ipairs(mergedConfig.lantern_configs) do
+        config_entry.name = config_entry.name:lower()
+    end
+    for i, name in ipairs(mergedConfig.blacklisted_names) do
+        mergedConfig.blacklisted_names[i] = name:lower()
+    end
+    for i, id in ipairs(mergedConfig.blacklisted_cell_ids) do
+        mergedConfig.blacklisted_cell_ids[i] = id:lower()
+    end
+
+    -- Create map for quick lookups
+    mergedConfig.blacklisted_cell_map = {}
+    for _, id in ipairs(mergedConfig.blacklisted_cell_ids) do
+        mergedConfig.blacklisted_cell_map[id] = true
     end
 
     -- Convert offsets and directions to vectors
@@ -129,15 +154,19 @@ local lanternConfigs = lanternConfig.lantern_configs
 
 
 local function isBlacklisted(obj)
-    -- Check blacklisted_ids (exact match)
-    for _, id in ipairs(lanternConfig.blacklisted_ids) do
-        if obj.id == id or obj.recordId == id then
+    local recordId = obj.recordId:lower()
+    local model = obj.type.record(obj).model
+    if model then model = model:lower() end
+    -- Check blacklisted_cell_ids
+    if obj.cell and obj.cell.name then
+        local cellName = obj.cell.name:lower()
+        if lanternConfig.blacklisted_cell_map[cellName] then
             return true
         end
     end
     -- Check blacklisted_names (partial match)
     for _, name in ipairs(lanternConfig.blacklisted_names) do
-        if obj.recordId:find(name) then
+        if recordId:find(name) or (model and model:find(name)) then
             return true
         end
     end
@@ -145,9 +174,11 @@ local function isBlacklisted(obj)
 end
 
 local function findConfig(obj)
+    local recordId = obj.recordId:lower()
+    local model = obj.type.record(obj).model
+    if model then model = model:lower() end
     for _, config in ipairs(lanternConfigs) do
-        local model = obj.type.record(obj).model
-        if obj.recordId:find(config.name) or (model and model:find(config.name)) then
+        if recordId:find(config.name) or (model and model:find(config.name)) then
             return config
         end
     end
@@ -188,79 +219,90 @@ local function findLanternsDeferredStep()
     if not pendingLanternObjects then return end
     local processed = 0
     local raycastsThisFrame = 0
+
     while processed < PENDING_LANTERN_BATCH and pendingLanternObjects and raycastsThisFrame < PENDING_LANTERN_RAYCASTS do
-        local cellList = pendingLanternObjects[pendingLanternCellIdx]
-        
-        if not cellList then
+        if pendingLanternIdx > #pendingLanternObjects then
             pendingLanternObjects = nil
+            pendingLanternIdx = 1
             break
         end
-        local cellListLen = #cellList
-        while pendingLanternObjIdx <= cellListLen and processed < PENDING_LANTERN_BATCH and raycastsThisFrame < PENDING_LANTERN_RAYCASTS do
-            local obj = cellList[pendingLanternObjIdx]
-            -- Find config
-            local foundConfig = findConfig(obj)
-            
-            -- Skip blacklisted objects
-            if isBlacklisted(obj) then goto continue end            
-            
-            if foundConfig then                
-                local finishedInitialise = false
-                if foundConfig.onlyHangs then
-                    finishedInitialise = true
-                end
-                local timerOffset = math.random() / 4
-                
-                local initialSwingAxis = nil
-                if foundConfig.localSwingDirection then
-                    initialSwingAxis = obj.rotation:apply(foundConfig.localSwingDirection):normalize():cross(ZUnitVector)
-                end
 
-                lanterns[obj.id] = {
-                    object = obj,
-                    swingPhaseOffset = math.random() * 2 * math.pi,
-                    yawPhaseOffset = math.random() * 2 * math.pi,
-                    initialYawRotation = obj.rotation:getYaw(),
-                    originOffset = foundConfig.offset,
-                    localSwingDirection = foundConfig.localSwingDirection,
-                    initialSwingAxis = initialSwingAxis,
-                    avoidYawRotation = foundConfig.avoidYawRotation,
-                    weight = foundConfig.weight or 1,
-                    windData = initializeLanternWindData(obj),
-                    animTimer = timerOffset,
-                    finishedInitialise = finishedInitialise,
-                    configName = foundConfig.name,
-                    onlyHangs = foundConfig.onlyHangs,
-                }                
-                obj:teleport(obj.cell, obj.startingPosition, { rotation = obj.startingRotation }) -- Ensure correct initial rotation
-                -- If not finishedInitialise, send for raycast (up to PENDING_LANTERN_RAYCASTS per frame)
-                if not finishedInitialise  then
-                    -- print("Sending lantern raycast request event for:", obj)
-                    player:sendEvent(PLAYER_EVENT_RAYCAST_REQUEST, { lantern = obj })
-                    raycastsThisFrame = raycastsThisFrame + 1
-                end
+        local obj = pendingLanternObjects[pendingLanternIdx]
+        -- Find config
+        local foundConfig = findConfig(obj)
+
+        -- Skip blacklisted objects
+        if not isBlacklisted(obj) and foundConfig then
+            local finishedInitialise = false
+            if foundConfig.onlyHangs then
+                finishedInitialise = true
+            end
+            local timerOffset = math.random() / 4
+
+            local initialSwingAxis = nil
+            if foundConfig.localSwingDirection then
+                initialSwingAxis = obj.rotation:apply(foundConfig.localSwingDirection):normalize():cross(ZUnitVector)
             end
 
-            ::continue::
-            processed = processed + 1
-            pendingLanternObjIdx = pendingLanternObjIdx + 1            
-        end        
-        if pendingLanternObjIdx > cellListLen then
-            pendingLanternCellIdx = pendingLanternCellIdx + 1
-            pendingLanternObjIdx = 1
+            lanterns[obj.id] = {
+                object = obj,
+                swingPhaseOffset = math.random() * 2 * math.pi,
+                yawPhaseOffset = math.random() * 2 * math.pi,
+                initialYawRotation = obj.rotation:getYaw(),
+                originOffset = foundConfig.offset,
+                localSwingDirection = foundConfig.localSwingDirection,
+                initialSwingAxis = initialSwingAxis,
+                avoidYawRotation = foundConfig.avoidYawRotation,
+                weight = foundConfig.weight or 1,
+                windData = initializeLanternWindData(obj),
+                animTimer = timerOffset,
+                finishedInitialise = finishedInitialise,
+                configName = foundConfig.name,
+                onlyHangs = foundConfig.onlyHangs,
+                positionNeedsReset = false
+            }
+            if finishedInitialise then
+                lanterns[obj.id].positionNeedsReset = true
+            end
+            -- If not finishedInitialise, send for raycast (up to PENDING_LANTERN_RAYCASTS per frame)
+            if not finishedInitialise then
+                player:sendEvent(PLAYER_EVENT_RAYCAST_REQUEST, { lantern = obj })
+                raycastsThisFrame = raycastsThisFrame + 1
+            end
         end
+
+        processed = processed + 1
+        pendingLanternIdx = pendingLanternIdx + 1
     end
-    -- print("Processed lanterns:", processed, "Raycasts this frame:", raycastsThisFrame)
 end
 
 local function prepareLanternSearch()
     pendingLanternObjects = {}
-    pendingLanternCellIdx = 1
-    pendingLanternObjIdx = 1
+    pendingLanternIdx = 1
     for _, cell in ipairs(currentCellsGroup or {}) do
-        table.insert(pendingLanternObjects, cell:getAll())
+        for _, obj in ipairs(cell:getAll()) do
+            table.insert(pendingLanternObjects, obj)
+        end
     end
 end
+
+local function processLanterns(objects)
+    -- Allows external scripts to enqueue lantern objects for deferred processing.
+    -- "objects" should be a list (array) of object instances.
+    if type(objects) ~= 'table' or #objects == 0 then
+        return
+    end
+
+    if not pendingLanternObjects then
+        pendingLanternObjects = {}
+        pendingLanternIdx = 1
+    end
+
+    for _, obj in ipairs(objects) do
+        table.insert(pendingLanternObjects, obj)
+    end
+end
+interface.processLanterns = processLanterns
 
 local function cleanUpLanterns()
     if not currentCellsGroup then return end
@@ -295,6 +337,7 @@ local function onRaycastResult(data)
     if lantern then
         if data.shouldInit then
             lantern.finishedInitialise = true
+            lantern.positionNeedsReset = true
         else
             -- print("Not initialising lantern", data.lantern.id, "due to raycast hit")
             lanterns[data.lantern.id] = nil
@@ -303,14 +346,28 @@ local function onRaycastResult(data)
     
 end
 
+local function onCameraDirectionUpdate(direction)
+    cameraLookDirection = direction
+end
+
+
+
+
 
 local teleportOptsPayload = {}
 
 
 local function animateLanterns(dt)
-    local lookDir = gutils.lookDirection(player)
+    local lookDir = cameraLookDirection
     for id, lanternData in pairs(lanterns) do
         if not lanternData.finishedInitialise then goto continue end
+        if lanternData.positionNeedsReset then
+            -- Reseting position here will result in manually positioned lanters teleporting back to their initial position - very undesirable
+            -- Atm im not sure why i even introduced it... were some signs broken without it?
+            -- lanternData.object:teleport(lanternData.object.cell, lanternData.object.startingPosition, { rotation = lanternData.object.startingRotation })
+            lanternData.positionNeedsReset = false
+            goto continue
+        end
         local lantern = lanternData.object
         local toLantern = lantern.position - player.position
         local dist = toLantern:length()
@@ -322,7 +379,7 @@ local function animateLanterns(dt)
         if lanternData.animTimer > 0 then goto continue end
         lanternData.animTimer = interval
 
-        if lantern.count < 1 or lantern.cell == nil then
+        if not lantern or not lantern:isValid() or lantern.cell == nil or not lantern.enabled then
             lanterns[id] = nil
         else
             local windData = lanternData.windData
@@ -438,5 +495,9 @@ return {
     eventHandlers = {
         CellChange = onCellChange,
         [PLAYER_EVENT_RAYCAST_RESULT] = onRaycastResult,
-    }
+        [PLAYER_EVENT_CAMERA_DIRECTION] = onCameraDirectionUpdate,
+    },
+    -- Public API for other scripts/plugins
+    interfaceName = DEFS.mod_name,
+    interface = interface
 }
