@@ -17,7 +17,7 @@ local PLAYER_EVENT_CAMERA_DIRECTION = "LanternCameraDirection"
 
 -- Interface
 local interface = {
-    version = 1.0    
+    version = 1.1    
 }
 
 local currentCell = nil
