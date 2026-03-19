@@ -34,11 +34,20 @@ If you are using custom lanterns in your mod—they might not be picked up, but 
 The config also includes a way to blacklist specific lanterns from being animated by their partial record id or mesh name, as well as by a full cell id of the cell to which they belong (i.e its possible to disable a whole cell at once). For the overall config and blacklist syntax, look at `base_lantern_config.yaml`.
 
 **Lua API**
-If methods above don't work for your mod - additionally there's a Lua interface you can use to manually ask `Animated Lanterns and Signs` to process a specific collection of lanterns (their names will still be checked against configs and blacklists in yaml file!) this way you can force this mod to process a set of lanterns without waiting for a player to change cell (thats usually when all lanterns are found and processed), e.g if you dynamically replacing lanterns in a cell.
+If methods above don't work for your mod - additionally there's a Lua interface you can use to manually ask `Animated Lanterns and Signs` to process a specific collection of lanterns (their names will still be checked against configs and blacklists in yaml file!) this way you can force this mod to process a set of lanterns without waiting for a player to change cell (thats usually when all lanterns are found and processed), e.g if you dynamically placing lanterns into a cell.
 
 ```lua
 local I = require("openmw.interface")
 I.AnimatedLanternsAndSigns.processLanterns(list_of_lantern_objects)
 ```
+
+You can also replace an existing animated lantern with a new one, preserving all animation state:
+
+```lua
+local I = require("openmw.interface")
+I.AnimatedLanternsAndSigns.replaceLantern(original_lantern, new_lantern)
+```
+
+This will find the lantern data for `original_lantern` (matched by `.id`) and swap the object reference to `new_lantern`, moving the entry to the correct key in the internal lanterns map. Returns `true` on success, `false` if the original lantern was not found. Use this if you are replacing one lantern with a slightly modified copy of that lantern in realtime (e.g lit vs unlit lantern).
 
 This interface is only available on global scripts.

@@ -304,6 +304,26 @@ local function processLanterns(objects)
 end
 interface.processLanterns = processLanterns
 
+local function replaceLantern(original, new)
+    -- Replaces an existing lantern object with a new one, updating the lanterns map.
+    -- original: the old lantern object (or object with .id to find)
+    -- new: the new lantern object to use in its place    
+
+    -- Find the lantern entry by original object id
+    local lanternData = lanterns[original.id]
+    if not lanternData then
+        return false
+    end
+
+    -- Remove old entry and replace with new
+    lanterns[original.id] = nil
+    lanternData.object = new
+    lanterns[new.id] = lanternData
+
+    return true
+end
+interface.replaceLantern = replaceLantern
+
 local function cleanUpLanterns()
     if not currentCellsGroup then return end
     
@@ -359,6 +379,7 @@ local teleportOptsPayload = {}
 
 local function animateLanterns(dt)
     local lookDir = cameraLookDirection
+    local playerPos = player.position
     for id, lanternData in pairs(lanterns) do
         if not lanternData.finishedInitialise then goto continue end
         if lanternData.positionNeedsReset then
@@ -368,18 +389,21 @@ local function animateLanterns(dt)
             lanternData.positionNeedsReset = false
             goto continue
         end
+
         local lantern = lanternData.object
-        local toLantern = lantern.position - player.position
+        local lanternPos = lantern.position
+        local toLantern = lanternPos - playerPos
         local dist = toLantern:length()
         if dist > activeLanternDistance then goto continue end
         if toLantern:dot(lookDir) < 0 then goto continue end
 
+        -- Accounting for animation interval (far away lanterns are animated at lower fps)
         local interval = getAnimIntervalForDistance(dist)
         lanternData.animTimer = (lanternData.animTimer or 0) - dt
         if lanternData.animTimer > 0 then goto continue end
         lanternData.animTimer = interval
 
-        if not lantern or not lantern:isValid() or lantern.cell == nil or not lantern.enabled then
+        if not lantern or lantern.count <= 0 or not lantern:isValid() or not lantern.enabled then
             lanterns[id] = nil
         else
             local windData = lanternData.windData
@@ -403,8 +427,7 @@ local function animateLanterns(dt)
 
             local angularAcceleration = netTorque
             windData.angularVelocity = (windData.angularVelocity + angularAcceleration * dt) * angularDamping
-            windData.swingAngle = windData.swingAngle + windData.angularVelocity * dt
-            
+            windData.swingAngle = windData.swingAngle + windData.angularVelocity * dt            
 
             local swingRotation = util.transform.rotate(windData.swingAngle, swingAxis)
 
@@ -412,7 +435,7 @@ local function animateLanterns(dt)
             if avoidYawRotation then
                 combinedRotation = swingRotation * util.transform.rotateZ(lanternData.initialYawRotation)
             else
-                local yawAngle = math.sin(core.getGameTime() * yawRotationSpeed + lanternData.yawPhaseOffset) * yawRotationAmplitude
+                local yawAngle = math.sin(core.getSimulationTime() * yawRotationSpeed + lanternData.yawPhaseOffset) * yawRotationAmplitude
                 local yawRotation = util.transform.rotateZ(yawAngle)
                 combinedRotation = swingRotation * yawRotation
             end
@@ -422,7 +445,7 @@ local function animateLanterns(dt)
             local finalOffset = currOriginOffset - newOriginOffset
 
             teleportOptsPayload.rotation = combinedRotation
-            lantern:teleport(lantern.cell, lantern.position + finalOffset, teleportOptsPayload)
+            lantern:teleport(lantern.cell, lanternPos + finalOffset, teleportOptsPayload)
         end
 
         ::continue::
