@@ -1,0 +1,20 @@
+{
+    "Lua.workspace.library": [
+        "${workspaceFolder}/.vscode/lua-types"
+    ],
+    "Lua.runtime.version": "Lua 5.1",
+    "Lua.workspace.checkThirdParty": false,
+    "Lua.diagnostics.globals": [
+        "onInit", "onUpdate", "onSave", "onLoad",
+        "onActive", "onInactive", "onActivated", "onTeleported",
+        "onDeath", "onConsume",
+        "onKeyPress", "onKeyRelease",
+        "onTouchPress", "onTouchRelease", "onTouchMove",
+        "onInputAction",
+        "onStateChanged", "onUiModeChanged"
+    ],
+    "Lua.completion.requireSeparator": ".",
+    "Lua.hint.enable": true,
+    "Lua.hint.paramName": "All",
+    "Lua.hint.returnType": true
+}

@@ -17,7 +17,7 @@ local PLAYER_EVENT_CAMERA_DIRECTION = "LanternCameraDirection"
 
 -- Interface
 local interface = {
-    version = 1.1    
+    version = 1.15    
 }
 
 local currentCell = nil
@@ -324,6 +324,11 @@ local function replaceLantern(original, new)
 end
 interface.replaceLantern = replaceLantern
 
+interface.isAnimated = function(objectId)
+    local data = lanterns[objectId]
+    return data and data.lastAnimTime or 0
+end
+
 local function cleanUpLanterns()
     if not currentCellsGroup then return end
     
@@ -369,9 +374,6 @@ end
 local function onCameraDirectionUpdate(direction)
     cameraLookDirection = direction
 end
-
-
-
 
 
 local teleportOptsPayload = {}
@@ -446,43 +448,89 @@ local function animateLanterns(dt)
 
             teleportOptsPayload.rotation = combinedRotation
             lantern:teleport(lantern.cell, lanternPos + finalOffset, teleportOptsPayload)
+            lanternData.lastAnimTime = core.getSimulationTime()
         end
 
         ::continue::
     end
 end
 
-local function updateWeatherSettings(cell)
-    local weatherRecord = core.weather.getCurrent(cell)
-    local isExterior = cell.isExterior
-    local isStorm = false
-    if weatherRecord then isStorm = weatherRecord.isStorm end
-    
-    -- Check if weather state actually changed
-    local newWeatherState = isExterior and (isStorm and "storm" or "exterior") or "interior"
-    if lastWeatherState == newWeatherState then
-        return false  -- No change, skip update
-    end
-    lastWeatherState = newWeatherState
-    
-    if isExterior then
-        if isStorm then
-            windPowerMin = stormWindPowerMin * s.settings.StormWindMult
-            windPowerMax = stormWindPowerMax * s.settings.StormWindMult
-            yawRotationSpeed = baseYawRotationSpeed * s.settings.StormWindMult
-        else
-            windPowerMin = extWindPowerMin * s.settings.CalmWindMult
-            windPowerMax = extWindPowerMax * s.settings.CalmWindMult
-            yawRotationSpeed = baseYawRotationSpeed * s.settings.CalmWindMult
-        end
-    else
-        windPowerMin = intWindPowerMin * s.settings.InteriorWindMult
-        windPowerMax = intWindPowerMax * s.settings.InteriorWindMult
-        yawRotationSpeed = baseYawRotationSpeed * s.settings.InteriorWindMult
-    end
-    
-    return true  -- Weather updated
+
+local stormWeathers = { -- these have isStorm = false and report wrong storm directions. Blizzard works fine.
+	Blight = true,
+	Ashstorm = true,
+}
+
+local function getWindParams(isStorm)
+	local mult = isStorm and s.settings.StormWindMult or s.settings.CalmWindMult
+	local baseMin = isStorm and stormWindPowerMin or extWindPowerMin
+	local baseMax = isStorm and stormWindPowerMax or extWindPowerMax
+	return baseMin * mult, baseMax * mult, baseYawRotationSpeed * mult
 end
+
+local function updateWeatherSettings(cell)
+	if not cell.isExterior then
+		if lastWeatherState == "interior" then return false end
+		lastWeatherState = "interior"
+		windDirection = util.vector3(0, 1, 0)
+		local mult = s.settings.InteriorWindMult
+		windPowerMin = intWindPowerMin * mult
+		windPowerMax = intWindPowerMax * mult
+		yawRotationSpeed = baseYawRotationSpeed * mult
+		return true
+	end
+
+	local currentWeather = core.weather.getCurrent(cell)
+	local nextWeather = core.weather.getNext(cell)
+	local transition = core.weather.getTransition(cell) or 0
+
+	local currentName = currentWeather and currentWeather.name
+	local nextName = nextWeather and nextWeather.name
+	local currentIsStorm = (currentWeather and currentWeather.isStorm) or stormWeathers[currentName]
+	local nextIsStorm = (nextWeather and nextWeather.isStorm) or stormWeathers[nextName]
+	
+	-- fix up blight and ashstorm's incorrect reported wind directions
+	local targetDirection
+	if stormWeathers[currentName] then
+		targetDirection = util.vector3(0, 1, 0)
+	else
+		targetDirection = core.weather.getCurrentStormDirection(cell)
+	end
+	
+	-- snap wind direction when stepping outside or blend slowly
+	if not lastWeatherState or lastWeatherState == "interior" then
+		windDirection = targetDirection
+	else
+		windDirection = (windDirection * 0.9 + targetDirection * 0.1):normalize()
+	end
+	
+	-- skip recalc if state unchanged and no active transition
+	local isStorm = currentIsStorm or nextIsStorm
+	local newWeatherState = isStorm and "storm" or "exterior"
+	if lastWeatherState == newWeatherState and transition == 0 then
+		return false
+	end
+	lastWeatherState = newWeatherState
+
+	-- lerp between current and next weather
+	local curMin, curMax, curYaw = getWindParams(currentIsStorm)
+	if nextWeather and transition > 0 then
+		local nextMin, nextMax, nextYaw = getWindParams(nextIsStorm)
+		local blend = 1 - transition
+		windPowerMin = curMin + (nextMin - curMin) * blend
+		windPowerMax = curMax + (nextMax - curMax) * blend
+		yawRotationSpeed = curYaw + (nextYaw - curYaw) * blend
+	else
+		windPowerMin = curMin
+		windPowerMax = curMax
+		yawRotationSpeed = curYaw
+	end
+
+	return true
+end
+
+
+
 
 local function onCellChange(cell)
     currentCellsGroup = getCellsAround(cell)

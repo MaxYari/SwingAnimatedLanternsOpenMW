@@ -1,0 +1,31 @@
+---@meta
+
+-- This file maps require() calls to their type definitions.
+-- LuaLS uses the @module and return type annotations in each file.
+
+--- @param modname 'openmw.util'
+--- @return openmw_util
+--- @overload fun(modname: 'openmw.core'): openmw_core
+--- @overload fun(modname: 'openmw.world'): openmw_world
+--- @overload fun(modname: 'openmw.types'): openmw_types
+--- @overload fun(modname: 'openmw.nearby'): openmw_nearby
+--- @overload fun(modname: 'openmw.self'): openmw_self
+--- @overload fun(modname: 'openmw.async'): openmw_async
+--- @overload fun(modname: 'openmw.animation'): openmw_animation
+--- @overload fun(modname: 'openmw.storage'): openmw_storage
+--- @overload fun(modname: 'openmw.camera'): openmw_camera
+--- @overload fun(modname: 'openmw.input'): openmw_input
+--- @overload fun(modname: 'openmw.ui'): openmw_ui
+--- @overload fun(modname: 'openmw.vfs'): openmw_vfs
+--- @overload fun(modname: 'openmw.ambient'): openmw_ambient
+--- @overload fun(modname: 'openmw.postprocessing'): openmw_postprocessing
+--- @overload fun(modname: 'openmw.debug'): openmw_debug
+--- @overload fun(modname: 'openmw.menu'): openmw_menu
+--- @overload fun(modname: 'openmw.markup'): openmw_markup
+--- @overload fun(modname: 'openmw.interfaces'): openmw_interfaces
+--- @overload fun(modname: 'openmw_aux.time'): openmw_aux_time
+--- @overload fun(modname: 'openmw_aux.util'): openmw_aux_util
+--- @overload fun(modname: 'openmw_aux.calendar'): openmw_aux_calendar
+--- @overload fun(modname: 'openmw_aux.ui'): openmw_aux_ui
+--- @overload fun(modname: string): any
+function require(modname) end
