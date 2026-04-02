@@ -1,0 +1,40 @@
+## Author: lelimule
+## Sign configs for a mod Authentic Signs
+
+lantern_configs:
+   - name: "as_inn_arrille"
+    offset: [0, 0, 0]
+    localSwingDirection: [1, 0, 0]
+    avoidYawRotation: true
+    weight: 1.5
+    onlyHangs: true
+  - name: "as_inn_endofworld"
+    offset: [0, 0, 0]
+    localSwingDirection: [1, 0, 0]
+    avoidYawRotation: true
+    weight: 1.5
+    onlyHangs: true
+  - name: "as_inn_halfway"
+    offset: [0, 0, 0]
+    localSwingDirection: [1, 0, 0]
+    avoidYawRotation: true
+    weight: 1.5
+    onlyHangs: true
+  - name: "as_inn_muriel"
+    offset: [0, 0, 0]
+    localSwingDirection: [1, 0, 0]
+    avoidYawRotation: true
+    weight: 1.5
+    onlyHangs: true
+  - name: "as_inn_shenks"
+    offset: [0, 0, 0]
+    localSwingDirection: [1, 0, 0]
+    avoidYawRotation: true
+    weight: 1.5
+    onlyHangs: true
+  - name: "as_inn_sixfishes"
+    offset: [0, 0, 0]
+    localSwingDirection: [1, 0, 0]
+    avoidYawRotation: true
+    weight: 1.5
+    onlyHangs: true
