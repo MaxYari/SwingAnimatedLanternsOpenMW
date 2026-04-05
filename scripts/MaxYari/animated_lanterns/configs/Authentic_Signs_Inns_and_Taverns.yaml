@@ -2,7 +2,7 @@
 ## Sign configs for a mod Authentic Signs
 
 lantern_configs:
-   - name: "as_inn_arrille"
+  - name: "as_inn_arrille"
     offset: [0, 0, 0]
     localSwingDirection: [1, 0, 0]
     avoidYawRotation: true
